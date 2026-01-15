@@ -1,7 +1,7 @@
 use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-use std::{env, fmt, io, mem};
+use std::{env, fmt, io};
 
 macro_rules! impl_raf_meta_tag {
     (
@@ -44,7 +44,7 @@ impl_raf_meta_tag! {
     UnknownDimensions2 = 0x0119,
     OutputHeightWidth = 0x0121, // RawImageSize
     RawInfo = 0x0130, // FujiLayout
-    CFAPattern = 0x0131, // XtransLayout
+    CFAPattern = 0x0131, // XTransLayout
     FlashExposureComp = 0x1011,
     MacroMode = 0x1020,
     FocusMode = 0x1021,
@@ -93,7 +93,7 @@ enum RafMetadataType {
     Position((u16, u16)),
     Kelvin(u32),
     ExposureValue(f32),
-    GeneralValue(u32),
+    // GeneralValue(u32),
     AspectRatio((u16, u16)),
     ASCIIText(Vec<u8>),
     ExposureBias(f32), // maybe same as exposure compensation
@@ -101,7 +101,6 @@ enum RafMetadataType {
 
 struct RafMetaItem {
     tag: RafMetaTag,
-    size: u16,
     data: RafMetadataType,
 }
 
@@ -112,21 +111,21 @@ struct RafMetaContainer {
 
 struct RafDirectory {
     version: u32,
-    unknown1: [u8; 20],
+    // unknown1: [u8; 20],
     jpeg_offset: u32,
     jpeg_size: u32,
     meta_container_offset: u32,
     meta_container_size: u32,
     cfa_offset: u32,
     cfa_size: u32,
-    unknown2: [u8; 12],
-    unknown3: u32,
+    // unknown2: [u8; 12],
+    // unknown3: u32,
 }
 
 struct Raf {
     filetype: [u8; 16],
-    data0: u32,
-    data1: u64,
+    // data0: u32,
+    // data1: u64,
     camera: [u8; 32],
     dir: RafDirectory,
     meta: RafMetaContainer,
@@ -153,7 +152,7 @@ impl FromBinary for RafMetaItem {
         let mut buf = vec![0u8; size as usize];
         reader.read_exact(&mut buf)?;
 
-        let mut data: RafMetadataType;
+        let data: RafMetadataType;
 
         match tag {
             RafMetaTag::SensorDimensions
@@ -189,43 +188,6 @@ impl FromBinary for RafMetaItem {
                     u16::from_be_bytes([buf[2], buf[3]]),
                 ));
             }
-            RafMetaTag::MacroMode
-            | RafMetaTag::FocusMode
-            | RafMetaTag::AFMode
-            | RafMetaTag::FocusPixel
-            | RafMetaTag::PrioritySettings
-            | RafMetaTag::FocusSettings
-            | RafMetaTag::AFCSettings
-            | RafMetaTag::ExrMode
-            | RafMetaTag::FujiCropMode
-            | RafMetaTag::ShutterType
-            | RafMetaTag::AutoBracketing
-            | RafMetaTag::SequenceNumber
-            | RafMetaTag::DriveMode
-            | RafMetaTag::SeriesLength
-            | RafMetaTag::PixelShiftOffset
-            | RafMetaTag::FocusWarning
-            | RafMetaTag::DynamicRange
-            | RafMetaTag::FilmMode
-            | RafMetaTag::DynamicRangeSetting
-            | RafMetaTag::DevDynamicRange
-            | RafMetaTag::MinFocalLength
-            | RafMetaTag::MaxFocalLength
-            | RafMetaTag::MaxApertureMinFocal
-            | RafMetaTag::MaxApertureMaxFocal
-            | RafMetaTag::AutoDynamicRange
-            | RafMetaTag::ImageStabilization
-            | RafMetaTag::ImageCount
-            | RafMetaTag::Rating
-            | RafMetaTag::DRangePriority
-            | RafMetaTag::DRangePriorityAuto
-            | RafMetaTag::DRangePriorityFixed
-                if size == 4 =>
-            {
-                data = RafMetadataType::GeneralValue(u32::from_be_bytes([
-                    buf[0], buf[1], buf[2], buf[3],
-                ]));
-            }
             RafMetaTag::FujiModel | RafMetaTag::FujiModel2 if size == 4 => {
                 data = RafMetadataType::ASCIIText(buf.to_vec());
             }
@@ -242,7 +204,7 @@ impl FromBinary for RafMetaItem {
             }
         }
 
-        Ok(Self { tag, size, data })
+        Ok(Self { tag, data })
     }
 }
 
@@ -267,66 +229,79 @@ impl FromBinary for RafMetaContainer {
 
 impl FromBinary for RafDirectory {
     fn read_from<R: Read + Seek>(reader: &mut R) -> io::Result<Self> {
+        let version = {
+            let mut buf = [0u8; 4];
+            reader.read_exact(&mut buf)?;
+            u32::from_be_bytes(buf)
+        };
+
+        // let unknown1 = {
+        //     let mut buf = [0u8; 20];
+        //     reader.read_exact(&mut buf)?;
+        //     buf
+        // };
+
+        reader.seek(SeekFrom::Current(20))?;
+
+        let jpeg_offset = {
+            let mut buf = [0u8; 4];
+            reader.read_exact(&mut buf)?;
+            u32::from_be_bytes(buf)
+        };
+
+        let jpeg_size = {
+            let mut buf = [0u8; 4];
+            reader.read_exact(&mut buf)?;
+            u32::from_be_bytes(buf)
+        };
+
+        let meta_container_offset = {
+            let mut buf = [0u8; 4];
+            reader.read_exact(&mut buf)?;
+            u32::from_be_bytes(buf)
+        };
+
+        let meta_container_size = {
+            let mut buf = [0u8; 4];
+            reader.read_exact(&mut buf)?;
+            u32::from_be_bytes(buf)
+        };
+
+        let cfa_offset = {
+            let mut buf = [0u8; 4];
+            reader.read_exact(&mut buf)?;
+            u32::from_be_bytes(buf)
+        };
+
+        let cfa_size = {
+            let mut buf = [0u8; 4];
+            reader.read_exact(&mut buf)?;
+            u32::from_be_bytes(buf)
+        };
+
+        // let unknown2 = {
+        //     let mut buf = [0u8; 12];
+        //     reader.read_exact(&mut buf)?;
+        //     buf
+        // };
+        //
+        // let unknown3 = {
+        //     let mut buf = [0u8; 4];
+        //     reader.read_exact(&mut buf)?;
+        //     u32::from_be_bytes(buf)
+        // };
+
         Ok(Self {
-            version: {
-                let mut buf = [0u8; 4];
-                reader.read_exact(&mut buf)?;
-                u32::from_be_bytes(buf)
-            },
-
-            unknown1: {
-                let mut buf = [0u8; 20];
-                reader.read_exact(&mut buf)?;
-                buf
-            },
-
-            jpeg_offset: {
-                let mut buf = [0u8; 4];
-                reader.read_exact(&mut buf)?;
-                u32::from_be_bytes(buf)
-            },
-
-            jpeg_size: {
-                let mut buf = [0u8; 4];
-                reader.read_exact(&mut buf)?;
-                u32::from_be_bytes(buf)
-            },
-
-            meta_container_offset: {
-                let mut buf = [0u8; 4];
-                reader.read_exact(&mut buf)?;
-                u32::from_be_bytes(buf)
-            },
-
-            meta_container_size: {
-                let mut buf = [0u8; 4];
-                reader.read_exact(&mut buf)?;
-                u32::from_be_bytes(buf)
-            },
-
-            cfa_offset: {
-                let mut buf = [0u8; 4];
-                reader.read_exact(&mut buf)?;
-                u32::from_be_bytes(buf)
-            },
-
-            cfa_size: {
-                let mut buf = [0u8; 4];
-                reader.read_exact(&mut buf)?;
-                u32::from_be_bytes(buf)
-            },
-
-            unknown2: {
-                let mut buf = [0u8; 12];
-                reader.read_exact(&mut buf)?;
-                buf
-            },
-
-            unknown3: {
-                let mut buf = [0u8; 4];
-                reader.read_exact(&mut buf)?;
-                u32::from_be_bytes(buf)
-            },
+            version,
+            // unknown1,
+            jpeg_offset,
+            jpeg_size,
+            meta_container_offset,
+            meta_container_size,
+            cfa_offset,
+            cfa_size,
+            // unknown2,
+            // unknown3,
         })
     }
 }
@@ -345,17 +320,19 @@ impl FromBinary for Raf {
             buf
         };
 
-        let data0 = {
-            let mut buf = [0u8; 4];
-            reader.read_exact(&mut buf)?;
-            u32::from_le_bytes(buf)
-        };
+        // let data0 = {
+        //     let mut buf = [0u8; 4];
+        //     reader.read_exact(&mut buf)?;
+        //     u32::from_le_bytes(buf)
+        // };
+        //
+        // let data1 = {
+        //     let mut buf = [0u8; 8];
+        //     reader.read_exact(&mut buf)?;
+        //     u64::from_le_bytes(buf)
+        // };
 
-        let data1 = {
-            let mut buf = [0u8; 8];
-            reader.read_exact(&mut buf)?;
-            u64::from_le_bytes(buf)
-        };
+        reader.seek(SeekFrom::Current(12))?;
 
         let camera = {
             let mut buf = [0u8; 32];
@@ -370,8 +347,8 @@ impl FromBinary for Raf {
 
         Ok(Self {
             filetype,
-            data0,
-            data1,
+            // data0,
+            // data1,
             camera,
             dir,
             meta,
@@ -415,7 +392,7 @@ impl Display for RafMetadataType {
             RafMetadataType::Position((x, y)) => write!(f, "{x} {y}"),
             RafMetadataType::Kelvin(value) => write!(f, "{value}K"),
             RafMetadataType::ExposureValue(value) => write!(f, "{value} EV"),
-            RafMetadataType::GeneralValue(value) => write!(f, "{value}"),
+            // RafMetadataType::GeneralValue(value) => write!(f, "{value}"),
             RafMetadataType::AspectRatio((a, b)) => write!(f, "{a}:{b}"),
             RafMetadataType::ASCIIText(value) => write!(f, "{}", String::from_utf8_lossy(value)),
             RafMetadataType::ExposureBias(value) => write!(f, "{value}"),
@@ -480,15 +457,13 @@ impl Display for Raf {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         writeln!(f, "Magic: {}", str::from_utf8(&self.filetype).unwrap())?;
         writeln!(f, "Camera: {}", str::from_utf8(&self.camera).unwrap())?;
-        write!(f, "Directory: \n{}", &self.dir);
+        write!(f, "Directory: \n{}", &self.dir)?;
         write!(f, "Metadata: \n{}", &self.meta)
     }
 }
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-
-    let mut buf: [u8; size_of::<Raf>()] = [0; size_of::<Raf>()];
 
     let mut source = File::open(args.get(2).expect("File not found")).expect("Unable to open file");
 
