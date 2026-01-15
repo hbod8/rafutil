@@ -35,9 +35,9 @@ macro_rules! impl_raf_meta_tag {
 
 impl_raf_meta_tag! {
     SensorDimensions = 0x0100,
-    ActiveAreaTopLeft = 0x0110,
-    ActiveAreaTopRight = 0x0111,
-    ActiveAreaAspectRatio = 0x0115,
+    ActiveAreaTopLeft = 0x0110, // RawImageCropTopLeft
+    ActiveAreaHeightWidth = 0x0111, // RawImageCroppedSize
+    ActiveAreaAspectRatio = 0x0115, // RawImageAspectRatio
     OutputHeightWidth = 0x0121,
     RawInfo = 0x0130,
     CFAPattern = 0x0131,
@@ -85,12 +85,12 @@ impl_raf_meta_tag! {
 
 enum RafMetadataType {
     Unknown(Vec<u8>),
-    PixelDimensions((u16, u16)),
-    Pixels(u32),
+    Dimensions((u16, u16)),
+    Position((u16, u16)),
     Kelvin(u32),
     ExposureValue(f32),
     GeneralValue(u32),
-    GeneralValuePair((u16, u16)),
+    AspectRatio((u16, u16)),
     ASCIIText(Vec<u8>),
 }
 
@@ -152,15 +152,10 @@ impl FromBinary for RafMetaItem {
 
         match tag {
             RafMetaTag::SensorDimensions if size == 4 => {
-                data = RafMetadataType::PixelDimensions((
+                data = RafMetadataType::Dimensions((
                     u16::from_be_bytes([buf[0], buf[1]]),
                     u16::from_be_bytes([buf[2], buf[3]]),
                 ));
-            }
-            RafMetaTag::ActiveAreaTopLeft | RafMetaTag::ActiveAreaTopRight if size == 4 => {
-                // Maybe little endian here, need to find the meaning of these values...
-                data =
-                    RafMetadataType::Pixels(u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]));
             }
             RafMetaTag::WhiteBalancePreset if size == 4 => {
                 data =
@@ -171,8 +166,14 @@ impl FromBinary for RafMetaItem {
                     buf[0], buf[1], buf[2], buf[3],
                 ]));
             }
+            RafMetaTag::ActiveAreaTopLeft | RafMetaTag::ActiveAreaHeightWidth if size == 4 => {
+                data = RafMetadataType::Position((
+                    u16::from_be_bytes([buf[0], buf[1]]),
+                    u16::from_be_bytes([buf[2], buf[3]]),
+                ));
+            }
             RafMetaTag::ActiveAreaAspectRatio if size == 4 => {
-                data = RafMetadataType::GeneralValuePair((
+                data = RafMetadataType::AspectRatio((
                     u16::from_be_bytes([buf[0], buf[1]]),
                     u16::from_be_bytes([buf[2], buf[3]]),
                 ));
@@ -391,12 +392,12 @@ impl Display for RafMetadataType {
                     write!(f, " trimmed for size...")
                 }
             }
-            RafMetadataType::PixelDimensions((x, y)) => write!(f, "{x} x {y}"),
-            RafMetadataType::Pixels(pixels) => write!(f, "{pixels}px"),
+            RafMetadataType::Dimensions((x, y)) => write!(f, "{x} x {y}"),
+            RafMetadataType::Position((x, y)) => write!(f, "{x} {y}"),
             RafMetadataType::Kelvin(value) => write!(f, "{value}K"),
             RafMetadataType::ExposureValue(value) => write!(f, "{value} EV"),
             RafMetadataType::GeneralValue(value) => write!(f, "{value}"),
-            RafMetadataType::GeneralValuePair((a, b)) => write!(f, "{a}:{b}"),
+            RafMetadataType::AspectRatio((a, b)) => write!(f, "{a}:{b}"),
             RafMetadataType::ASCIIText(value) => write!(f, "{}", String::from_utf8_lossy(value)),
         }
     }
@@ -460,7 +461,7 @@ impl Display for Raf {
         writeln!(f, "Magic: {}", str::from_utf8(&self.filetype).unwrap())?;
         writeln!(f, "Camera: {}", str::from_utf8(&self.camera).unwrap())?;
         write!(f, "Directory: \n{}", &self.dir);
-        write!(f, "Meta: \n{}", &self.meta)
+        write!(f, "Metadata: \n{}", &self.meta)
     }
 }
 
