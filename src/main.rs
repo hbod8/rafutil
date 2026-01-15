@@ -9,6 +9,7 @@ enum RafMetaTag {
     SensorDimensions = 0x0100,
     ActiveAreaTopLeft = 0x0110,
     ActiveAreaTopRight = 0x0111,
+    ActiveAreaAspectRatio = 0x0112,
     OutputHeightWidth = 0x0121,
     RawInfo = 0x0130,
     CFAPattern = 0x0131,
@@ -47,8 +48,11 @@ enum RafMetaTag {
     DRangePriorityFixed = 0x1445,
     FujiModel = 0x1447,
     FujiModel2 = 0x1448,
-    OtherData = 0x0c00,
-    CameraMultiplier = 0x2ff0,
+    WhiteBalanceRGB = 0x2f00,
+    CameraMultiplier = 0x2ff0, // Also listed as White Balance RGB
+    RelativeExposure = 0x9200,
+    RAWExposureBias = 0x9650,
+    OtherData = 0xc000, // Also listed as RAF Data
 }
 
 enum RafMetadataType {
@@ -58,6 +62,7 @@ enum RafMetadataType {
     Kelvin(u32),
     ExposureValue(f32),
     GeneralValue(u32),
+    GeneralValuePair((u16, u16)),
     ASCIIText(Vec<u8>),
 }
 
@@ -67,11 +72,10 @@ impl From<u16> for RafMetaTag {
             0x0100 => RafMetaTag::SensorDimensions,
             0x0110 => RafMetaTag::ActiveAreaTopLeft,
             0x0111 => RafMetaTag::ActiveAreaTopRight,
+            0x0112 => RafMetaTag::ActiveAreaAspectRatio,
             0x0121 => RafMetaTag::OutputHeightWidth,
             0x0130 => RafMetaTag::RawInfo,
             0x0131 => RafMetaTag::CFAPattern,
-            0x2ff0 => RafMetaTag::CameraMultiplier,
-            0xc000 => RafMetaTag::OtherData,
             0x1002 => RafMetaTag::WhiteBalancePreset,
             0x1011 => RafMetaTag::FlashExposureComp,
             0x1020 => RafMetaTag::MacroMode,
@@ -107,6 +111,11 @@ impl From<u16> for RafMetaTag {
             0x1445 => RafMetaTag::DRangePriorityFixed,
             0x1447 => RafMetaTag::FujiModel,
             0x1448 => RafMetaTag::FujiModel2,
+            0x2f00 => RafMetaTag::WhiteBalanceRGB,
+            0x2ff0 => RafMetaTag::CameraMultiplier,
+            0x9200 => RafMetaTag::RelativeExposure,
+            0x9650 => RafMetaTag::RAWExposureBias,
+            0xc000 => RafMetaTag::OtherData,
             other => RafMetaTag::Unknown(other),
         }
     }
@@ -188,6 +197,12 @@ impl FromBinary for RafMetaItem {
                 data = RafMetadataType::ExposureValue(f32::from_be_bytes([
                     buf[0], buf[1], buf[2], buf[3],
                 ]));
+            }
+            RafMetaTag::ActiveAreaAspectRatio if size == 4 => {
+                data = RafMetadataType::GeneralValuePair((
+                    u16::from_be_bytes([buf[0], buf[1]]),
+                    u16::from_be_bytes([buf[2], buf[3]]),
+                ));
             }
             RafMetaTag::MacroMode
             | RafMetaTag::FocusMode
@@ -377,11 +392,9 @@ impl Display for RafMetaTag {
             RafMetaTag::SensorDimensions => write!(f, "SensorDimensions"),
             RafMetaTag::ActiveAreaTopLeft => write!(f, "ActiveAreaTopLeft"),
             RafMetaTag::ActiveAreaTopRight => write!(f, "ActiveAreaTopRight"),
+            RafMetaTag::ActiveAreaAspectRatio => write!(f, "ActiveAreaAspectRatio"),
             RafMetaTag::OutputHeightWidth => write!(f, "OutputHeightWidth"),
-            RafMetaTag::RawInfo => write!(f, "RawInfo"),
             RafMetaTag::CFAPattern => write!(f, "CFAPattern"),
-            RafMetaTag::CameraMultiplier => write!(f, "CameraMultiplier"),
-            RafMetaTag::OtherData => write!(f, "OtherData"),
             RafMetaTag::WhiteBalancePreset => write!(f, "WhiteBalancePreset"),
             RafMetaTag::FlashExposureComp => write!(f, "FlashExposureComp"),
             RafMetaTag::MacroMode => write!(f, "MacroMode"),
@@ -415,8 +428,14 @@ impl Display for RafMetaTag {
             RafMetaTag::DRangePriority => write!(f, "DRangePriority"),
             RafMetaTag::DRangePriorityAuto => write!(f, "DRangePriorityAuto"),
             RafMetaTag::DRangePriorityFixed => write!(f, "DRangePriorityFixed"),
+            RafMetaTag::WhiteBalanceRGB => write!(f, "WhiteBalanceRGB"),
+            RafMetaTag::CameraMultiplier => write!(f, "CameraMultiplier"),
+            RafMetaTag::RelativeExposure => write!(f, "RelativeExposure"),
+            RafMetaTag::RAWExposureBias => write!(f, "RAWExposureBias"),
             RafMetaTag::FujiModel => write!(f, "FujiModel"),
             RafMetaTag::FujiModel2 => write!(f, "FujiModel2"),
+            RafMetaTag::OtherData => write!(f, "OtherData"),
+            RafMetaTag::RawInfo => write!(f, "RawInfo"),
             RafMetaTag::Unknown(value) => write!(f, "Unknown(0x{:04X})", value),
         }
     }
@@ -459,6 +478,7 @@ impl Display for RafMetadataType {
             RafMetadataType::Kelvin(value) => write!(f, "{value}K"),
             RafMetadataType::ExposureValue(value) => write!(f, "{value} EV"),
             RafMetadataType::GeneralValue(value) => write!(f, "{value}"),
+            RafMetadataType::GeneralValuePair((a, b)) => write!(f, "{a}:{b}"),
             RafMetadataType::ASCIIText(value) => write!(f, "{}", String::from_utf8_lossy(value)),
         }
     }
