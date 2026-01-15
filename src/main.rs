@@ -3,9 +3,37 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::{env, fmt, io, mem};
 
-#[repr(u16)]
-enum RafMetaTag {
-    Unknown(u16),
+macro_rules! impl_raf_meta_tag {
+    (
+        $( $name:ident = $value:expr ),* $(,)?
+    ) => {
+        #[repr(u16)]
+        enum RafMetaTag {
+            Unknown(u16),
+            $( $name = $value ),*
+        }
+
+        impl From<u16> for RafMetaTag {
+            fn from(value: u16) -> Self {
+                match value {
+                    $( $value => RafMetaTag::$name,)*
+                    other => RafMetaTag::Unknown(other),
+                }
+            }
+        }
+
+        impl Display for RafMetaTag {
+            fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+                match self {
+                    $(RafMetaTag::$name => write!(f, stringify!($name)),)*
+                    RafMetaTag::Unknown(value) => write!(f, "Unknown(0x{:04X})", value),
+                }
+            }
+        }
+    };
+}
+
+impl_raf_meta_tag! {
     SensorDimensions = 0x0100,
     ActiveAreaTopLeft = 0x0110,
     ActiveAreaTopRight = 0x0111,
@@ -64,61 +92,6 @@ enum RafMetadataType {
     GeneralValue(u32),
     GeneralValuePair((u16, u16)),
     ASCIIText(Vec<u8>),
-}
-
-impl From<u16> for RafMetaTag {
-    fn from(value: u16) -> Self {
-        match value {
-            0x0100 => RafMetaTag::SensorDimensions,
-            0x0110 => RafMetaTag::ActiveAreaTopLeft,
-            0x0111 => RafMetaTag::ActiveAreaTopRight,
-            0x0115 => RafMetaTag::ActiveAreaAspectRatio,
-            0x0121 => RafMetaTag::OutputHeightWidth,
-            0x0130 => RafMetaTag::RawInfo,
-            0x0131 => RafMetaTag::CFAPattern,
-            0x1002 => RafMetaTag::WhiteBalancePreset,
-            0x1011 => RafMetaTag::FlashExposureComp,
-            0x1020 => RafMetaTag::MacroMode,
-            0x1021 => RafMetaTag::FocusMode,
-            0x1022 => RafMetaTag::AFMode,
-            0x1023 => RafMetaTag::FocusPixel,
-            0x102b => RafMetaTag::PrioritySettings,
-            0x102d => RafMetaTag::FocusSettings,
-            0x102e => RafMetaTag::AFCSettings,
-            0x1034 => RafMetaTag::ExrMode,
-            0x104d => RafMetaTag::FujiCropMode,
-            0x1050 => RafMetaTag::ShutterType,
-            0x1100 => RafMetaTag::AutoBracketing,
-            0x1101 => RafMetaTag::SequenceNumber,
-            0x1103 => RafMetaTag::DriveMode,
-            0x1105 => RafMetaTag::SeriesLength,
-            0x1106 => RafMetaTag::PixelShiftOffset,
-            0x1301 => RafMetaTag::FocusWarning,
-            0x1400 => RafMetaTag::DynamicRange,
-            0x1401 => RafMetaTag::FilmMode,
-            0x1402 => RafMetaTag::DynamicRangeSetting,
-            0x1403 => RafMetaTag::DevDynamicRange,
-            0x1404 => RafMetaTag::MinFocalLength,
-            0x1405 => RafMetaTag::MaxFocalLength,
-            0x1406 => RafMetaTag::MaxApertureMinFocal,
-            0x1407 => RafMetaTag::MaxApertureMaxFocal,
-            0x140b => RafMetaTag::AutoDynamicRange,
-            0x1422 => RafMetaTag::ImageStabilization,
-            0x1438 => RafMetaTag::ImageCount,
-            0x1431 => RafMetaTag::Rating,
-            0x1443 => RafMetaTag::DRangePriority,
-            0x1444 => RafMetaTag::DRangePriorityAuto,
-            0x1445 => RafMetaTag::DRangePriorityFixed,
-            0x1447 => RafMetaTag::FujiModel,
-            0x1448 => RafMetaTag::FujiModel2,
-            0x2f00 => RafMetaTag::WhiteBalanceRGB,
-            0x2ff0 => RafMetaTag::CameraMultiplier,
-            0x9200 => RafMetaTag::RelativeExposure,
-            0x9650 => RafMetaTag::RAWExposureBias,
-            0xc000 => RafMetaTag::OtherData,
-            other => RafMetaTag::Unknown(other),
-        }
-    }
 }
 
 struct RafMetaItem {
@@ -243,6 +216,9 @@ impl FromBinary for RafMetaItem {
             }
             RafMetaTag::FujiModel | RafMetaTag::FujiModel2 if size == 4 => {
                 data = RafMetadataType::ASCIIText(buf.to_vec());
+            }
+            _ => {
+                data = RafMetadataType::Unknown(buf.to_vec());
             }
         }
 
@@ -380,61 +356,6 @@ impl FromBinary for Raf {
             dir,
             meta,
         })
-    }
-}
-
-impl Display for RafMetaTag {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            RafMetaTag::SensorDimensions => write!(f, "SensorDimensions"),
-            RafMetaTag::ActiveAreaTopLeft => write!(f, "ActiveAreaTopLeft"),
-            RafMetaTag::ActiveAreaTopRight => write!(f, "ActiveAreaTopRight"),
-            RafMetaTag::ActiveAreaAspectRatio => write!(f, "ActiveAreaAspectRatio"),
-            RafMetaTag::OutputHeightWidth => write!(f, "OutputHeightWidth"),
-            RafMetaTag::CFAPattern => write!(f, "CFAPattern"),
-            RafMetaTag::WhiteBalancePreset => write!(f, "WhiteBalancePreset"),
-            RafMetaTag::FlashExposureComp => write!(f, "FlashExposureComp"),
-            RafMetaTag::MacroMode => write!(f, "MacroMode"),
-            RafMetaTag::FocusMode => write!(f, "FocusMode"),
-            RafMetaTag::AFMode => write!(f, "AFMode"),
-            RafMetaTag::FocusPixel => write!(f, "FocusPixel"),
-            RafMetaTag::PrioritySettings => write!(f, "PrioritySettings"),
-            RafMetaTag::FocusSettings => write!(f, "FocusSettings"),
-            RafMetaTag::AFCSettings => write!(f, "AFCSettings"),
-            RafMetaTag::ExrMode => write!(f, "ExrMode"),
-            RafMetaTag::FujiCropMode => write!(f, "FujiCropMode"),
-            RafMetaTag::ShutterType => write!(f, "ShutterType"),
-            RafMetaTag::AutoBracketing => write!(f, "AutoBracketing"),
-            RafMetaTag::SequenceNumber => write!(f, "SequenceNumber"),
-            RafMetaTag::DriveMode => write!(f, "DriveMode"),
-            RafMetaTag::SeriesLength => write!(f, "SeriesLength"),
-            RafMetaTag::PixelShiftOffset => write!(f, "PixelShiftOffset"),
-            RafMetaTag::FocusWarning => write!(f, "FocusWarning"),
-            RafMetaTag::DynamicRange => write!(f, "DynamicRange"),
-            RafMetaTag::FilmMode => write!(f, "FilmMode"),
-            RafMetaTag::DynamicRangeSetting => write!(f, "DynamicRangeSetting"),
-            RafMetaTag::DevDynamicRange => write!(f, "DevDynamicRange"),
-            RafMetaTag::MinFocalLength => write!(f, "MinFocalLength"),
-            RafMetaTag::MaxFocalLength => write!(f, "MaxFocalLength"),
-            RafMetaTag::MaxApertureMinFocal => write!(f, "MaxApertureMinFocal"),
-            RafMetaTag::MaxApertureMaxFocal => write!(f, "MaxApertureMaxFocal"),
-            RafMetaTag::AutoDynamicRange => write!(f, "AutoDynamicRange"),
-            RafMetaTag::ImageStabilization => write!(f, "ImageStabilization"),
-            RafMetaTag::ImageCount => write!(f, "ImageCount"),
-            RafMetaTag::Rating => write!(f, "Rating"),
-            RafMetaTag::DRangePriority => write!(f, "DRangePriority"),
-            RafMetaTag::DRangePriorityAuto => write!(f, "DRangePriorityAuto"),
-            RafMetaTag::DRangePriorityFixed => write!(f, "DRangePriorityFixed"),
-            RafMetaTag::WhiteBalanceRGB => write!(f, "WhiteBalanceRGB"),
-            RafMetaTag::CameraMultiplier => write!(f, "CameraMultiplier"),
-            RafMetaTag::RelativeExposure => write!(f, "RelativeExposure"),
-            RafMetaTag::RAWExposureBias => write!(f, "RAWExposureBias"),
-            RafMetaTag::FujiModel => write!(f, "FujiModel"),
-            RafMetaTag::FujiModel2 => write!(f, "FujiModel2"),
-            RafMetaTag::OtherData => write!(f, "OtherData"),
-            RafMetaTag::RawInfo => write!(f, "RawInfo"),
-            RafMetaTag::Unknown(value) => write!(f, "Unknown(0x{:04X})", value),
-        }
     }
 }
 
