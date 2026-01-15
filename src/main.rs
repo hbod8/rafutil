@@ -35,13 +35,16 @@ macro_rules! impl_raf_meta_tag {
 
 impl_raf_meta_tag! {
     SensorDimensions = 0x0100,
+    WhiteBalancePreset = 0x1002, // Possibly wrong
     ActiveAreaTopLeft = 0x0110, // RawImageCropTopLeft
     ActiveAreaHeightWidth = 0x0111, // RawImageCroppedSize
+    UnknownDimensions1 = 0x0112,
+    UnknownDimensions1Inverted = 0x0113,
     ActiveAreaAspectRatio = 0x0115, // RawImageAspectRatio
-    OutputHeightWidth = 0x0121,
-    RawInfo = 0x0130,
-    CFAPattern = 0x0131,
-    WhiteBalancePreset = 0x1002,
+    UnknownDimensions2 = 0x0119,
+    OutputHeightWidth = 0x0121, // RawImageSize
+    RawInfo = 0x0130, // FujiLayout
+    CFAPattern = 0x0131, // XtransLayout
     FlashExposureComp = 0x1011,
     MacroMode = 0x1020,
     FocusMode = 0x1021,
@@ -80,6 +83,7 @@ impl_raf_meta_tag! {
     CameraMultiplier = 0x2ff0, // Also listed as White Balance RGB
     RelativeExposure = 0x9200,
     RAWExposureBias = 0x9650,
+    UnknownExposureBias = 0x9651,
     OtherData = 0xc000, // Also listed as RAF Data
 }
 
@@ -92,6 +96,7 @@ enum RafMetadataType {
     GeneralValue(u32),
     AspectRatio((u16, u16)),
     ASCIIText(Vec<u8>),
+    ExposureBias(f32), // maybe same as exposure compensation
 }
 
 struct RafMetaItem {
@@ -151,7 +156,13 @@ impl FromBinary for RafMetaItem {
         let mut data: RafMetadataType;
 
         match tag {
-            RafMetaTag::SensorDimensions if size == 4 => {
+            RafMetaTag::SensorDimensions
+            | RafMetaTag::OutputHeightWidth
+            | RafMetaTag::UnknownDimensions1
+            | RafMetaTag::UnknownDimensions1Inverted
+            | RafMetaTag::UnknownDimensions2
+                if size == 4 =>
+            {
                 data = RafMetadataType::Dimensions((
                     u16::from_be_bytes([buf[0], buf[1]]),
                     u16::from_be_bytes([buf[2], buf[3]]),
@@ -217,6 +228,14 @@ impl FromBinary for RafMetaItem {
             }
             RafMetaTag::FujiModel | RafMetaTag::FujiModel2 if size == 4 => {
                 data = RafMetadataType::ASCIIText(buf.to_vec());
+            }
+            RafMetaTag::RAWExposureBias | RafMetaTag::UnknownExposureBias if size == 4 => {
+                let a = i16::from_be_bytes([buf[0], buf[1]]);
+                let mut b = u16::from_be_bytes([buf[2], buf[3]]) as f32;
+                if b < 1.0 {
+                    b = 1.0;
+                }
+                data = RafMetadataType::ExposureBias(a as f32 / b);
             }
             _ => {
                 data = RafMetadataType::Unknown(buf.to_vec());
@@ -399,6 +418,7 @@ impl Display for RafMetadataType {
             RafMetadataType::GeneralValue(value) => write!(f, "{value}"),
             RafMetadataType::AspectRatio((a, b)) => write!(f, "{a}:{b}"),
             RafMetadataType::ASCIIText(value) => write!(f, "{}", String::from_utf8_lossy(value)),
+            RafMetadataType::ExposureBias(value) => write!(f, "{value}"),
         }
     }
 }
