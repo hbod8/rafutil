@@ -1,4 +1,4 @@
-use std::{env, fmt, io};
+use std::{env, fmt, io, mem};
 use std::fmt::{Display, Formatter};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -6,14 +6,14 @@ use std::io::{Read, Seek, SeekFrom};
 #[repr(u16)]
 enum RafMetaTag {
     Unknown(u16),
-    SensorDimensions = 0x100,
-    ActiveAreaTopLeft = 0x110,
-    ActiveAreaTopRight = 0x111,
-    OutputHeightWidth = 0x121,
-    RawInfo = 0x130,
-    CFAPattern = 0x131,
+    SensorDimensions = 0x0100,
+    ActiveAreaTopLeft = 0x0110,
+    ActiveAreaTopRight = 0x0111,
+    OutputHeightWidth = 0x0121,
+    RawInfo = 0x0130,
+    CFAPattern = 0x0131,
     CameraMultiplier = 0x2ff0,
-    OtherData = 0xc00,
+    OtherData = 0x0c00,
 }
 
 enum RafMetadataType {
@@ -25,14 +25,14 @@ enum RafMetadataType {
 impl From<u16> for RafMetaTag {
     fn from(value: u16) -> Self {
         match value {
-            0x100 => RafMetaTag::SensorDimensions,
-            0x110 => RafMetaTag::ActiveAreaTopLeft,
-            0x111 => RafMetaTag::ActiveAreaTopRight,
-            0x121 => RafMetaTag::OutputHeightWidth,
-            0x130 => RafMetaTag::RawInfo,
-            0x131 => RafMetaTag::CFAPattern,
+            0x0100 => RafMetaTag::SensorDimensions,
+            0x0110 => RafMetaTag::ActiveAreaTopLeft,
+            0x0111 => RafMetaTag::ActiveAreaTopRight,
+            0x0121 => RafMetaTag::OutputHeightWidth,
+            0x0130 => RafMetaTag::RawInfo,
+            0x0131 => RafMetaTag::CFAPattern,
             0x2ff0 => RafMetaTag::CameraMultiplier,
-            0xc00 => RafMetaTag::OtherData,
+            0x0c00 => RafMetaTag::OtherData,
             other => RafMetaTag::Unknown(other),
         }
     }
@@ -251,7 +251,7 @@ impl Display for RafMetaTag {
             RafMetaTag::CFAPattern         => write!(f, "CFAPattern"),
             RafMetaTag::CameraMultiplier   => write!(f, "CameraMultiplier"),
             RafMetaTag::OtherData          => write!(f, "OtherData"),
-            RafMetaTag::Unknown(value)     => write!(f, "Unknown({})", value),
+            RafMetaTag::Unknown(value)     => write!(f, "Unknown(0x{:04X})", value),
         }
     }
 }
@@ -310,8 +310,6 @@ impl Display for Raf {
 }
 
 fn main() {
-    println!("rafutil");
-
     let args: Vec<String> = env::args().collect();
 
     let mut buf: [u8; size_of::<Raf>()] = [0; size_of::<Raf>()];
