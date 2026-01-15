@@ -9,7 +9,7 @@ enum RafMetaTag {
     SensorDimensions = 0x0100,
     ActiveAreaTopLeft = 0x0110,
     ActiveAreaTopRight = 0x0111,
-    ActiveAreaAspectRatio = 0x0112,
+    ActiveAreaAspectRatio = 0x0115,
     OutputHeightWidth = 0x0121,
     RawInfo = 0x0130,
     CFAPattern = 0x0131,
@@ -72,7 +72,7 @@ impl From<u16> for RafMetaTag {
             0x0100 => RafMetaTag::SensorDimensions,
             0x0110 => RafMetaTag::ActiveAreaTopLeft,
             0x0111 => RafMetaTag::ActiveAreaTopRight,
-            0x0112 => RafMetaTag::ActiveAreaAspectRatio,
+            0x0115 => RafMetaTag::ActiveAreaAspectRatio,
             0x0121 => RafMetaTag::OutputHeightWidth,
             0x0130 => RafMetaTag::RawInfo,
             0x0131 => RafMetaTag::CFAPattern,
@@ -243,9 +243,6 @@ impl FromBinary for RafMetaItem {
             }
             RafMetaTag::FujiModel | RafMetaTag::FujiModel2 if size == 4 => {
                 data = RafMetadataType::ASCIIText(buf.to_vec());
-            }
-            _ => {
-                data = RafMetadataType::Unknown(buf);
             }
         }
 
