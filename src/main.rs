@@ -200,16 +200,17 @@ impl FromBinary for RafMetaItem {
                 }
                 data = RafMetadataType::ExposureBias(a as f32 / b);
             }
-            RafMetaTag::OtherData => {
-                println!("other pos:{}", reader.stream_position()? - size as u64);
-                println!("other  sz:{}", size);
-                data = RafMetadataType::Unknown(buf.to_vec());
-            }
-            RafMetaTag::UnknownData => {
-                println!("unkwn pos:{}", reader.stream_position()? - size as u64);
-                println!("unkwn  sz:{}", size);
-                data = RafMetadataType::Unknown(buf.to_vec());
-            }
+            // @TODO I'm sure there's something valuable here
+            // RafMetaTag::OtherData => {
+            //     println!("other pos:{}", reader.stream_position()? - size as u64);
+            //     println!("other  sz:{}", size);
+            //     data = RafMetadataType::Unknown(buf.to_vec());
+            // }
+            // RafMetaTag::UnknownData => {
+            //     println!("unkwn pos:{}", reader.stream_position()? - size as u64);
+            //     println!("unkwn  sz:{}", size);
+            //     data = RafMetadataType::Unknown(buf.to_vec());
+            // }
             _ => {
                 data = RafMetadataType::Unknown(buf.to_vec());
             }
