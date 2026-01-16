@@ -34,13 +34,13 @@ macro_rules! impl_raf_meta_tag {
 }
 
 /*
- These are a list of educated guesses on the meaning of Fujifilm's metadata tags.
+These are a list of educated guesses on the meaning of Fujifilm's metadata tags.
 
- 1/16/2026 - Seems like there is some kind of pattern between the first byte and
- the second one relating to datatype and tag number. Dimensions usually start with
- 0x01, u32 values usually start with 0x10.  Also in HDR tags, 0x05 and 0x06 are shutter
- and aperture data stored as u32/u32 fractions.
- */
+1/16/2026 - Seems like there is some kind of pattern between the first byte and
+the second one relating to datatype and tag number. Dimensions usually start with
+0x01, u32 values usually start with 0x10.  Also in HDR tags, 0x05 and 0x06 are shutter
+and aperture data stored as u32/u32 fractions.
+*/
 impl_raf_meta_tag! {
     SensorDimensions = 0x0100,
     ActiveAreaTopLeft = 0x0110, // RawImageCropTopLeft
@@ -125,25 +125,17 @@ struct RafMetaContainer {
     items: Vec<RafMetaItem>,
 }
 
-struct RafDirectory {
+struct Raf {
+    camera: [u8; 32],
     version: u32,
-    // unknown1: [u8; 20],
+    // padding[20]
     jpeg_offset: u32,
     jpeg_size: u32,
     meta_container_offset: u32,
     meta_container_size: u32,
     cfa_offset: u32,
     cfa_size: u32,
-    // unknown2: [u8; 12],
-    // unknown3: u32,
-}
-
-struct Raf {
-    filetype: [u8; 16],
-    // data0: u32,
-    // data1: u64,
-    camera: [u8; 32],
-    dir: RafDirectory,
+    // padding[16]
     meta: RafMetaContainer,
 }
 
@@ -277,19 +269,30 @@ impl FromBinary for RafMetaContainer {
     }
 }
 
-impl FromBinary for RafDirectory {
+impl FromBinary for Raf {
     fn read_from<R: Read + Seek>(reader: &mut R) -> io::Result<Self> {
+        let mut buf = [0u8; 16];
+        reader.read_exact(&mut buf)?;
+        if &buf != b"FUJIFILMCCD-RAW " {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid RAF filetype",
+            ));
+        }
+
+        reader.seek(SeekFrom::Current(12))?;
+
+        let camera = {
+            let mut buf = [0u8; 32];
+            reader.read_exact(&mut buf)?;
+            buf
+        };
+
         let version = {
             let mut buf = [0u8; 4];
             reader.read_exact(&mut buf)?;
             u32::from_be_bytes(buf)
         };
-
-        // let unknown1 = {
-        //     let mut buf = [0u8; 20];
-        //     reader.read_exact(&mut buf)?;
-        //     buf
-        // };
 
         reader.seek(SeekFrom::Current(20))?;
 
@@ -329,89 +332,26 @@ impl FromBinary for RafDirectory {
             u32::from_be_bytes(buf)
         };
 
-        // let unknown2 = {
-        //     let mut buf = [0u8; 12];
-        //     reader.read_exact(&mut buf)?;
-        //     buf
-        // };
-        //
-        // let unknown3 = {
-        //     let mut buf = [0u8; 4];
-        //     reader.read_exact(&mut buf)?;
-        //     u32::from_be_bytes(buf)
-        // };
-
         // We can sense if this is an Image Sequence if the magic is here, or if we're at the JPEG Offset.
-        if reader.stream_position()? + 20 >= jpeg_offset as u64 {
-            Ok(Self {
-                version,
-                jpeg_offset,
-                jpeg_size,
-                meta_container_offset,
-                meta_container_size,
-                cfa_offset,
-                cfa_size,
-            })
-        } else {
-            reader.seek(SeekFrom::Current(40))?;
-            Ok(Self {
-                version,
-                jpeg_offset,
-                jpeg_size,
-                meta_container_offset,
-                meta_container_size,
-                cfa_offset,
-                cfa_size,
-            })
-        }
-    }
-}
-
-impl FromBinary for Raf {
-    fn read_from<R: Read + Seek>(reader: &mut R) -> io::Result<Self> {
-        let filetype = {
-            let mut buf = [0u8; 16];
-            reader.read_exact(&mut buf)?;
-            if &buf != b"FUJIFILMCCD-RAW " {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "invalid RAF filetype",
-                ));
-            }
-            buf
-        };
-
-        // let data0 = {
-        //     let mut buf = [0u8; 4];
-        //     reader.read_exact(&mut buf)?;
-        //     u32::from_le_bytes(buf)
-        // };
+        // if reader.stream_position()? + 40 >= jpeg_offset as u64 {
         //
-        // let data1 = {
-        //     let mut buf = [0u8; 8];
-        //     reader.read_exact(&mut buf)?;
-        //     u64::from_le_bytes(buf)
-        // };
+        // } else {
+        //     reader.seek(SeekFrom::Current(40))?;
+        //
+        // }
 
-        reader.seek(SeekFrom::Current(12))?;
-
-        let camera = {
-            let mut buf = [0u8; 32];
-            reader.read_exact(&mut buf)?;
-            buf
-        };
-
-        let dir = RafDirectory::read_from(reader)?;
-
-        reader.seek(SeekFrom::Start(dir.meta_container_offset as u64))?;
+        reader.seek(SeekFrom::Start(meta_container_offset as u64))?;
         let meta = RafMetaContainer::read_from(reader)?;
 
         Ok(Self {
-            filetype,
-            // data0,
-            // data1,
             camera,
-            dir,
+            version,
+            jpeg_offset,
+            jpeg_size,
+            meta_container_offset,
+            meta_container_size,
+            cfa_offset,
+            cfa_size,
             meta,
         })
     }
@@ -486,49 +426,38 @@ impl Display for RafMetaContainer {
     }
 }
 
-impl Display for RafDirectory {
+impl Display for Raf {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Camera: {}", str::from_utf8(&self.camera).unwrap())?;
         writeln!(
             f,
-            "\tVersion: \"{}\" {} 0x{:X}",
+            "Version: \"{}\" {} 0x{:X}",
             str::from_utf8(&u32::to_be_bytes(self.version)).unwrap(),
             &self.version,
             &self.version
         )?;
         writeln!(
             f,
-            "\tJPEG Offset: {} 0x{:X}",
+            "JPEG Offset: {} 0x{:X}",
             &self.jpeg_offset, &self.jpeg_offset
         )?;
+        writeln!(f, "JPEG Size: {} 0x{:X}", &self.jpeg_size, &self.jpeg_size)?;
         writeln!(
             f,
-            "\tJPEG Size: {} 0x{:X}",
-            &self.jpeg_size, &self.jpeg_size
-        )?;
-        writeln!(
-            f,
-            "\tMetadata Container Offset: {} 0x{:X}",
+            "Metadata Container Offset: {} 0x{:X}",
             &self.meta_container_offset, &self.meta_container_offset
         )?;
         writeln!(
             f,
-            "\tMetadata Container Size: {} 0x{:X}",
+            "Metadata Container Size: {} 0x{:X}",
             &self.meta_container_size, &self.meta_container_size
         )?;
         writeln!(
             f,
-            "\tCFA Offset: {} 0x{:X}",
+            "CFA Offset: {} 0x{:X}",
             &self.cfa_offset, &self.cfa_offset
         )?;
-        writeln!(f, "\tCFA Size: {} 0x{:X}", &self.cfa_size, &self.cfa_size)
-    }
-}
-
-impl Display for Raf {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        writeln!(f, "Magic: {}", str::from_utf8(&self.filetype).unwrap())?;
-        writeln!(f, "Camera: {}", str::from_utf8(&self.camera).unwrap())?;
-        write!(f, "Directory: \n{}", &self.dir)?;
+        writeln!(f, "CFA Size: {} 0x{:X}", &self.cfa_size, &self.cfa_size)?;
         write!(f, "Metadata: \n{}", &self.meta)
     }
 }
