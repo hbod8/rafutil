@@ -35,7 +35,6 @@ macro_rules! impl_raf_meta_tag {
 
 impl_raf_meta_tag! {
     SensorDimensions = 0x0100,
-    WhiteBalancePreset = 0x1002, // Possibly wrong
     ActiveAreaTopLeft = 0x0110, // RawImageCropTopLeft
     ActiveAreaHeightWidth = 0x0111, // RawImageCroppedSize
     UnknownDimensions1 = 0x0112,
@@ -45,6 +44,7 @@ impl_raf_meta_tag! {
     OutputHeightWidth = 0x0121, // RawImageSize
     RawInfo = 0x0130, // FujiLayout
     CFAPattern = 0x0131, // XTransLayout
+    WhiteBalancePreset = 0x1002, // Possibly wrong
     FlashExposureComp = 0x1011,
     MacroMode = 0x1020,
     FocusMode = 0x1021,
@@ -85,6 +85,7 @@ impl_raf_meta_tag! {
     RAWExposureBias = 0x9650,
     UnknownExposureBias = 0x9651,
     OtherData = 0xc000, // Also listed as RAF Data
+    UnknownData = 0xca00,
 }
 
 enum RafMetadataType {
@@ -192,12 +193,22 @@ impl FromBinary for RafMetaItem {
                 data = RafMetadataType::ASCIIText(buf.to_vec());
             }
             RafMetaTag::RAWExposureBias | RafMetaTag::UnknownExposureBias if size == 4 => {
-                let a = i16::from_be_bytes([buf[0], buf[1]]);
+                let a = i16::fromq_be_bytes([buf[0], buf[1]]);
                 let mut b = u16::from_be_bytes([buf[2], buf[3]]) as f32;
                 if b < 1.0 {
                     b = 1.0;
                 }
                 data = RafMetadataType::ExposureBias(a as f32 / b);
+            }
+            RafMetaTag::OtherData => {
+                println!("other pos:{}", reader.stream_position()? - size as u64);
+                println!("other  sz:{}", size);
+                data = RafMetadataType::Unknown(buf.to_vec());
+            }
+            RafMetaTag::UnknownData => {
+                println!("unkwn pos:{}", reader.stream_position()? - size as u64);
+                println!("unkwn  sz:{}", size);
+                data = RafMetadataType::Unknown(buf.to_vec());
             }
             _ => {
                 data = RafMetadataType::Unknown(buf.to_vec());
