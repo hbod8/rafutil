@@ -33,6 +33,14 @@ macro_rules! impl_raf_meta_tag {
     };
 }
 
+/*
+ These are a list of educated guesses on the meaning of Fujifilm's metadata tags.
+
+ 1/16/2026 - Seems like there is some kind of pattern between the first byte and
+ the second one relating to datatype and tag number. Dimensions usually start with
+ 0x01, u32 values usually start with 0x10.  Also in HDR tags, 0x05 and 0x06 are shutter
+ and aperture data stored as u32/u32 fractions.
+ */
 impl_raf_meta_tag! {
     SensorDimensions = 0x0100,
     ActiveAreaTopLeft = 0x0110, // RawImageCropTopLeft
@@ -44,6 +52,11 @@ impl_raf_meta_tag! {
     OutputHeightWidth = 0x0121, // RawImageSize
     RawInfo = 0x0130, // FujiLayout
     CFAPattern = 0x0131, // XTransLayout
+    ImageSequenceNumber = 0x0120,
+    ImageSequenceRelativeExposureBias = 0x0320, // might be swapped with one below
+    ImageSequenceAbsoluteExposure = 0x0420,
+    ImageSequenceShutterDuration = 0x0520,
+    ImageSequenceApetureRatio = 0x0620,
     WhiteBalancePreset = 0x1002, // Possibly wrong
     FlashExposureComp = 0x1011,
     MacroMode = 0x1020,
@@ -98,6 +111,8 @@ enum RafMetadataType {
     AspectRatio((u16, u16)),
     ASCIIText(Vec<u8>),
     ExposureBias(f32), // maybe same as exposure compensation
+    ShutterDuration((u32, u32)),
+    ApertureRatio((u32, u32)),
 }
 
 struct RafMetaItem {
@@ -193,12 +208,35 @@ impl FromBinary for RafMetaItem {
                 data = RafMetadataType::ASCIIText(buf.to_vec());
             }
             RafMetaTag::RAWExposureBias | RafMetaTag::UnknownExposureBias if size == 4 => {
-                let a = i16::fromq_be_bytes([buf[0], buf[1]]);
+                let a = i16::from_be_bytes([buf[0], buf[1]]);
                 let mut b = u16::from_be_bytes([buf[2], buf[3]]) as f32;
                 if b < 1.0 {
                     b = 1.0;
                 }
                 data = RafMetadataType::ExposureBias(a as f32 / b);
+            }
+            // Both shutter and aperture are assumed to be positive here (unsigned).
+            RafMetaTag::ImageSequenceShutterDuration if size == 8 => {
+                data = {
+                    let n = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
+                    let d = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
+                    if d == 0 {
+                        RafMetadataType::Unknown(buf.to_vec())
+                    } else {
+                        RafMetadataType::ShutterDuration((n, d))
+                    }
+                }
+            }
+            RafMetaTag::ImageSequenceApetureRatio if size == 8 => {
+                data = {
+                    let n = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
+                    let d = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
+                    if d == 0 {
+                        RafMetadataType::Unknown(buf.to_vec())
+                    } else {
+                        RafMetadataType::ApertureRatio((n, d))
+                    }
+                }
             }
             // @TODO I'm sure there's something valuable here
             // RafMetaTag::OtherData => {
@@ -303,18 +341,29 @@ impl FromBinary for RafDirectory {
         //     u32::from_be_bytes(buf)
         // };
 
-        Ok(Self {
-            version,
-            // unknown1,
-            jpeg_offset,
-            jpeg_size,
-            meta_container_offset,
-            meta_container_size,
-            cfa_offset,
-            cfa_size,
-            // unknown2,
-            // unknown3,
-        })
+        // We can sense if this is an Image Sequence if the magic is here, or if we're at the JPEG Offset.
+        if reader.stream_position()? + 20 >= jpeg_offset as u64 {
+            Ok(Self {
+                version,
+                jpeg_offset,
+                jpeg_size,
+                meta_container_offset,
+                meta_container_size,
+                cfa_offset,
+                cfa_size,
+            })
+        } else {
+            reader.seek(SeekFrom::Current(40))?;
+            Ok(Self {
+                version,
+                jpeg_offset,
+                jpeg_size,
+                meta_container_offset,
+                meta_container_size,
+                cfa_offset,
+                cfa_size,
+            })
+        }
     }
 }
 
@@ -375,28 +424,36 @@ impl Display for RafMetadataType {
                 if value.len() == 2 {
                     write!(
                         f,
-                        "{:?} u16: {} char: {}",
+                        "{:?} u16: {}",
                         value,
-                        u16::from_be_bytes([value[0], value[1]]),
-                        String::from_utf8_lossy(value)
+                        u16::from_be_bytes([value[0], value[1]])
                     )
                 } else if value.len() == 4 {
                     write!(
                         f,
-                        "{:?} u32: {} [u16; 2]: {:?} f32: {:.8} char: {}",
+                        "{:?} u32: {} [u16; 2]: {:?} f32: {:.8}",
                         value,
                         u32::from_be_bytes([value[0], value[1], value[2], value[3]]),
                         [
                             u16::from_be_bytes([value[0], value[1]]),
                             u16::from_be_bytes([value[2], value[3]])
                         ],
-                        f32::from_be_bytes([value[0], value[1], value[2], value[3]]),
-                        String::from_utf8_lossy(value)
+                        f32::from_be_bytes([value[0], value[1], value[2], value[3]])
                     )
-                } else if value.len() < 256 {
+                } else if value.len() == 8 {
+                    write!(
+                        f,
+                        "{:?} [u32; 2]: {:?}",
+                        value,
+                        [
+                            u32::from_be_bytes([value[0], value[1], value[2], value[3]]),
+                            u32::from_be_bytes([value[4], value[5], value[6], value[7]])
+                        ]
+                    )
+                } else if value.len() < 64 {
                     write!(f, "{:?}", value)
                 } else {
-                    write!(f, "{:?}", &value[0..255])?;
+                    write!(f, "{:?}", &value[0..64])?;
                     write!(f, " trimmed for size...")
                 }
             }
@@ -408,6 +465,8 @@ impl Display for RafMetadataType {
             RafMetadataType::AspectRatio((a, b)) => write!(f, "{a}:{b}"),
             RafMetadataType::ASCIIText(value) => write!(f, "{}", String::from_utf8_lossy(value)),
             RafMetadataType::ExposureBias(value) => write!(f, "{value}"),
+            RafMetadataType::ShutterDuration((n, d)) => write!(f, "{n}/{d} s"),
+            RafMetadataType::ApertureRatio((a, b)) => write!(f, "f/{:.02}", *a as f64 / *b as f64),
         }
     }
 }
