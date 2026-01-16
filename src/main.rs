@@ -8,25 +8,25 @@ macro_rules! impl_raf_meta_tag {
         $( $name:ident = $value:expr ),* $(,)?
     ) => {
         #[repr(u16)]
-        enum RafMetaTag {
+        enum RafMetadataTag {
             Unknown(u16),
             $( $name = $value ),*
         }
 
-        impl From<u16> for RafMetaTag {
+        impl From<u16> for RafMetadataTag {
             fn from(value: u16) -> Self {
                 match value {
-                    $( $value => RafMetaTag::$name,)*
-                    other => RafMetaTag::Unknown(other),
+                    $( $value => RafMetadataTag::$name,)*
+                    other => RafMetadataTag::Unknown(other),
                 }
             }
         }
 
-        impl Display for RafMetaTag {
+        impl Display for RafMetadataTag {
             fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
                 match self {
-                    $(RafMetaTag::$name => write!(f, stringify!($name)),)*
-                    RafMetaTag::Unknown(value) => write!(f, "Unknown(0x{:04X})", value),
+                    $(RafMetadataTag::$name => write!(f, stringify!($name)),)*
+                    RafMetadataTag::Unknown(value) => write!(f, "Unknown(0x{:04X})", value),
                 }
             }
         }
@@ -115,14 +115,22 @@ enum RafMetadataType {
     ApertureRatio((u32, u32)),
 }
 
-struct RafMetaItem {
-    tag: RafMetaTag,
+struct RafMetadataItem {
+    tag: RafMetadataTag,
     data: RafMetadataType,
 }
 
-struct RafMetaContainer {
+struct RafMetadataContainer {
     count: u32,
-    items: Vec<RafMetaItem>,
+    items: Vec<RafMetadataItem>,
+}
+
+struct RafImageSequenceMetadataContainer {
+    additional_image_count: u32,
+    total_image_count: u32,
+    image_sequence_metadata_size: u16,
+    image_sequence_metadata_count: u16,
+    image_sequence_metadata: Vec<RafMetadataItem>,
 }
 
 struct Raf {
@@ -136,19 +144,21 @@ struct Raf {
     cfa_offset: u32,
     cfa_size: u32,
     // padding[16]
-    meta: RafMetaContainer,
+    // All other contents are variably sized
+    image_sequence_metadata: Option<RafImageSequenceMetadataContainer>,
+    meta: RafMetadataContainer,
 }
 
 trait FromBinary: Sized {
     fn read_from<R: Read + Seek>(reader: &mut R) -> io::Result<Self>;
 }
 
-impl FromBinary for RafMetaItem {
+impl FromBinary for RafMetadataItem {
     fn read_from<R: Read + Seek>(reader: &mut R) -> io::Result<Self> {
         let tag = {
             let mut buf = [0u8; 2];
             reader.read_exact(&mut buf)?;
-            RafMetaTag::from(u16::from_be_bytes(buf))
+            RafMetadataTag::from(u16::from_be_bytes(buf))
         };
 
         let size = {
@@ -163,11 +173,11 @@ impl FromBinary for RafMetaItem {
         let data: RafMetadataType;
 
         match tag {
-            RafMetaTag::SensorDimensions
-            | RafMetaTag::OutputHeightWidth
-            | RafMetaTag::UnknownDimensions1
-            | RafMetaTag::UnknownDimensions1Inverted
-            | RafMetaTag::UnknownDimensions2
+            RafMetadataTag::SensorDimensions
+            | RafMetadataTag::OutputHeightWidth
+            | RafMetadataTag::UnknownDimensions1
+            | RafMetadataTag::UnknownDimensions1Inverted
+            | RafMetadataTag::UnknownDimensions2
                 if size == 4 =>
             {
                 data = RafMetadataType::Dimensions((
@@ -175,31 +185,31 @@ impl FromBinary for RafMetaItem {
                     u16::from_be_bytes([buf[2], buf[3]]),
                 ));
             }
-            RafMetaTag::WhiteBalancePreset if size == 4 => {
+            RafMetadataTag::WhiteBalancePreset if size == 4 => {
                 data =
                     RafMetadataType::Kelvin(u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]));
             }
-            RafMetaTag::FlashExposureComp if size == 4 => {
+            RafMetadataTag::FlashExposureComp if size == 4 => {
                 data = RafMetadataType::ExposureValue(f32::from_be_bytes([
                     buf[0], buf[1], buf[2], buf[3],
                 ]));
             }
-            RafMetaTag::ActiveAreaTopLeft | RafMetaTag::ActiveAreaHeightWidth if size == 4 => {
+            RafMetadataTag::ActiveAreaTopLeft | RafMetadataTag::ActiveAreaHeightWidth if size == 4 => {
                 data = RafMetadataType::Position((
                     u16::from_be_bytes([buf[0], buf[1]]),
                     u16::from_be_bytes([buf[2], buf[3]]),
                 ));
             }
-            RafMetaTag::ActiveAreaAspectRatio if size == 4 => {
+            RafMetadataTag::ActiveAreaAspectRatio if size == 4 => {
                 data = RafMetadataType::AspectRatio((
                     u16::from_be_bytes([buf[0], buf[1]]),
                     u16::from_be_bytes([buf[2], buf[3]]),
                 ));
             }
-            RafMetaTag::FujiModel | RafMetaTag::FujiModel2 if size == 4 => {
+            RafMetadataTag::FujiModel | RafMetadataTag::FujiModel2 if size == 4 => {
                 data = RafMetadataType::ASCIIText(buf.to_vec());
             }
-            RafMetaTag::RAWExposureBias | RafMetaTag::UnknownExposureBias if size == 4 => {
+            RafMetadataTag::RAWExposureBias | RafMetadataTag::UnknownExposureBias if size == 4 => {
                 let a = i16::from_be_bytes([buf[0], buf[1]]);
                 let mut b = u16::from_be_bytes([buf[2], buf[3]]) as f32;
                 if b < 1.0 {
@@ -208,7 +218,7 @@ impl FromBinary for RafMetaItem {
                 data = RafMetadataType::ExposureBias(a as f32 / b);
             }
             // Both shutter and aperture are assumed to be positive here (unsigned).
-            RafMetaTag::ImageSequenceShutterDuration if size == 8 => {
+            RafMetadataTag::ImageSequenceShutterDuration if size == 8 => {
                 data = {
                     let n = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
                     let d = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
@@ -219,7 +229,7 @@ impl FromBinary for RafMetaItem {
                     }
                 }
             }
-            RafMetaTag::ImageSequenceApetureRatio if size == 8 => {
+            RafMetadataTag::ImageSequenceApetureRatio if size == 8 => {
                 data = {
                     let n = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
                     let d = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
@@ -231,12 +241,12 @@ impl FromBinary for RafMetaItem {
                 }
             }
             // @TODO I'm sure there's something valuable here
-            // RafMetaTag::OtherData => {
+            // RafMetadataTag::OtherData => {
             //     println!("other pos:{}", reader.stream_position()? - size as u64);
             //     println!("other  sz:{}", size);
             //     data = RafMetadataType::Unknown(buf.to_vec());
             // }
-            // RafMetaTag::UnknownData => {
+            // RafMetadataTag::UnknownData => {
             //     println!("unkwn pos:{}", reader.stream_position()? - size as u64);
             //     println!("unkwn  sz:{}", size);
             //     data = RafMetadataType::Unknown(buf.to_vec());
@@ -250,7 +260,7 @@ impl FromBinary for RafMetaItem {
     }
 }
 
-impl FromBinary for RafMetaContainer {
+impl FromBinary for RafMetadataContainer {
     fn read_from<R: Read + Seek>(reader: &mut R) -> io::Result<Self> {
         let count = {
             let mut buf = [0u8; 4];
@@ -262,7 +272,7 @@ impl FromBinary for RafMetaContainer {
 
         let mut items = Vec::with_capacity(count as usize);
         for _ in 0..count {
-            items.push(RafMetaItem::read_from(reader)?);
+            items.push(RafMetadataItem::read_from(reader)?);
         }
 
         Ok(Self { count, items })
@@ -341,7 +351,7 @@ impl FromBinary for Raf {
         // }
 
         reader.seek(SeekFrom::Start(meta_container_offset as u64))?;
-        let meta = RafMetaContainer::read_from(reader)?;
+        let meta = RafMetadataContainer::read_from(reader)?;
 
         Ok(Self {
             camera,
@@ -352,6 +362,7 @@ impl FromBinary for Raf {
             meta_container_size,
             cfa_offset,
             cfa_size,
+            image_sequence_metadata : None,
             meta,
         })
     }
@@ -411,13 +422,13 @@ impl Display for RafMetadataType {
     }
 }
 
-impl Display for RafMetaItem {
+impl Display for RafMetadataItem {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         writeln!(f, "\t{}: {}", self.tag, self.data)
     }
 }
 
-impl Display for RafMetaContainer {
+impl Display for RafMetadataContainer {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         for i in 0..(self.count as usize) {
             write!(f, "{}", &self.items[i])?;
