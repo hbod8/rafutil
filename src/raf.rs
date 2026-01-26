@@ -1,6 +1,8 @@
 use std::fmt::{Display, Formatter};
 use std::{fmt, io};
 use std::io::{Read, Seek, SeekFrom};
+use crate::exif::{ExifData};
+use crate::{FromBinary, FromBinaryLimit};
 
 macro_rules! impl_raf_meta_tag {
     (
@@ -144,20 +146,17 @@ pub struct Raf {
     camera: String,
     version: u32,
     // padding[20]
-    jpeg_offset: u32,
-    jpeg_size: u32,
-    meta_container_offset: u32,
-    meta_container_size: u32,
-    cfa_offset: u32,
-    cfa_size: u32,
+    // jpeg_offset: u32,
+    // jpeg_size: u32,
+    // meta_container_offset: u32,
+    // meta_container_size: u32,
+    // cfa_offset: u32,
+    // cfa_size: u32,
     // padding[16]
     // All other contents are variably sized
+    exif_data: ExifData,
     image_sequence_metadata: Option<RafImageSequenceContainer>,
     metadata_container: RafMetadataContainer,
-}
-
-pub trait FromBinary: Sized {
-    fn read_from<R: Read + Seek>(reader: &mut R) -> io::Result<Self>;
 }
 
 impl FromBinary for RafMetadataItem {
@@ -413,23 +412,25 @@ impl FromBinary for Raf {
             u32::from_be_bytes(buf)
         };
 
-        let meta_container_size = {
-            let mut buf = [0u8; 4];
-            reader.read_exact(&mut buf)?;
-            u32::from_be_bytes(buf)
-        };
+        // let meta_container_size = {
+        //     let mut buf = [0u8; 4];
+        //     reader.read_exact(&mut buf)?;
+        //     u32::from_be_bytes(buf)
+        // };
+        //
+        // let cfa_offset = {
+        //     let mut buf = [0u8; 4];
+        //     reader.read_exact(&mut buf)?;
+        //     u32::from_be_bytes(buf)
+        // };
+        //
+        // let cfa_size = {
+        //     let mut buf = [0u8; 4];
+        //     reader.read_exact(&mut buf)?;
+        //     u32::from_be_bytes(buf)
+        // };
 
-        let cfa_offset = {
-            let mut buf = [0u8; 4];
-            reader.read_exact(&mut buf)?;
-            u32::from_be_bytes(buf)
-        };
-
-        let cfa_size = {
-            let mut buf = [0u8; 4];
-            reader.read_exact(&mut buf)?;
-            u32::from_be_bytes(buf)
-        };
+        reader.seek(SeekFrom::Current(12))?;
 
         // We can sense if this is an Image Sequence if the magic is here, or if we're at the JPEG Offset.
         let image_sequence_metadata = {
@@ -450,15 +451,13 @@ impl FromBinary for Raf {
         reader.seek(SeekFrom::Start(meta_container_offset as u64))?;
         let meta = RafMetadataContainer::read_from(reader)?;
 
+        reader.seek(SeekFrom::Start(jpeg_offset as u64))?;
+        let exif_data = ExifData::read_from_to_limit(reader, jpeg_size as u64)?;
+
         Ok(Self {
             camera,
             version,
-            jpeg_offset,
-            jpeg_size,
-            meta_container_offset,
-            meta_container_size,
-            cfa_offset,
-            cfa_size,
+            exif_data,
             image_sequence_metadata,
             metadata_container: meta,
         })
@@ -574,28 +573,28 @@ impl Display for Raf {
             &self.version,
             &self.version
         )?;
-        writeln!(
-            f,
-            "JPEG Offset: {} 0x{:X}",
-            &self.jpeg_offset, &self.jpeg_offset
-        )?;
-        writeln!(f, "JPEG Size: {} 0x{:X}", &self.jpeg_size, &self.jpeg_size)?;
-        writeln!(
-            f,
-            "Metadata Container Offset: {} 0x{:X}",
-            &self.meta_container_offset, &self.meta_container_offset
-        )?;
-        writeln!(
-            f,
-            "Metadata Container Size: {} 0x{:X}",
-            &self.meta_container_size, &self.meta_container_size
-        )?;
-        writeln!(
-            f,
-            "CFA Offset: {} 0x{:X}",
-            &self.cfa_offset, &self.cfa_offset
-        )?;
-        writeln!(f, "CFA Size: {} 0x{:X}", &self.cfa_size, &self.cfa_size)?;
+        // writeln!(
+        //     f,
+        //     "JPEG Offset: {} 0x{:X}",
+        //     &self.jpeg_offset, &self.jpeg_offset
+        // )?;
+        // writeln!(f, "JPEG Size: {} 0x{:X}", &self.jpeg_size, &self.jpeg_size)?;
+        // writeln!(
+        //     f,
+        //     "Metadata Container Offset: {} 0x{:X}",
+        //     &self.meta_container_offset, &self.meta_container_offset
+        // )?;
+        // writeln!(
+        //     f,
+        //     "Metadata Container Size: {} 0x{:X}",
+        //     &self.meta_container_size, &self.meta_container_size
+        // )?;
+        // writeln!(
+        //     f,
+        //     "CFA Offset: {} 0x{:X}",
+        //     &self.cfa_offset, &self.cfa_offset
+        // )?;
+        // writeln!(f, "CFA Size: {} 0x{:X}", &self.cfa_size, &self.cfa_size)?;
         if let Some(items) = &self.image_sequence_metadata {
             write!(f, "Image Sequence Metadata:\n{}", items)?;
         }

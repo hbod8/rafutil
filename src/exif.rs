@@ -1,3 +1,4 @@
+use crate::FromBinaryLimit;
 use std::io;
 use std::io::{Read, Seek, SeekFrom};
 
@@ -18,7 +19,7 @@ macro_rules! impl_byte_order {
         impl From<u16> for ByteOrder {
             fn from(value: u16) -> Self {
                 match value {
-                    $( u16::from_be_bytes(*$value) => ByteOrder::$name,)*
+                    $( x if x == u16::from_be_bytes(*$value) => ByteOrder::$name,)*
                     other => ByteOrder::Unknown(other),
                 }
             }
@@ -72,12 +73,9 @@ pub struct ExifData {
     image_file_directories: Vec<ImageFileDirectoryEntry>,
 }
 
-pub trait FromBinary: Sized {
-    fn read_from<R: Read + Seek>(reader: &mut R) -> io::Result<Self>;
-}
 
-impl FromBinary for ExifData {
-    fn read_from<R: Read + Seek>(reader: &mut R) -> io::Result<Self> {
+impl FromBinaryLimit for ExifData {
+    fn read_from_to_limit<R: Read + Seek>(reader: &mut R, limit: u64) -> io::Result<Self> {
         // Assume we're reading from the start of a JPEG Image
         let mut buf = [0u8; 2];
         reader.read_exact(&mut buf);
@@ -91,22 +89,35 @@ impl FromBinary for ExifData {
         }
 
         let mut size: u16 = 0;
+        let mut done: bool = false;
+
+        dbg!(buf);
 
         // Seek to correct APP1 Tag
-        while buf[0] != 0xFF && buf[1] != 0xE1 {
+        while !done {
+            if reader.stream_position()? > limit {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "invalid JPEG filetype, ran out of bytes",
+                ));
+            }
+
             match (buf[1]) {
                 0xC0..=0xCF | 0xDB..=0xDF | 0xE0 | 0xE2..=0xEF => {
                     // SOF1-SOF15, DQT, DNL, DRI, DHP, EXP, APP0, APP2-APP15
+                    dbg!("sized");
                     reader.read_exact(&mut buf)?;
                     let len = u16::from_be_bytes(buf);
                     reader.seek(SeekFrom::Current((len)  as i64))?;
                     reader.read_exact(&mut buf)?;
                 }
-                0xD0..0xD7 | 0xFE => {
+                0xD0..=0xD8 | 0xFE => {
                     // RST, DQT, DNL, DRI, DHP, EXP
+                    dbg!("unsized");
                     reader.read_exact(&mut buf)?;
                 }
                 0xE1 => {
+                    dbg!("app1");
                     // APP1
                     reader.read_exact(&mut buf)?;
                     let len = u16::from_be_bytes(buf);
@@ -118,6 +129,7 @@ impl FromBinary for ExifData {
                         if &magic == b"Exif\0\0" {
                             // Found the data!
                             size = len;
+                            done = true;
                         } else {
                             reader.seek(SeekFrom::Current((len - 6)  as i64))?;
                             reader.read_exact(&mut buf)?;
@@ -127,8 +139,9 @@ impl FromBinary for ExifData {
                         reader.read_exact(&mut buf)?;
                     }
                 }
-                0xD9 | 0xD8 => {
+                0xD9 | 0xDA => {
                     // SOS EOI
+                    dbg!("sos eoi");
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
                         "invalid JPEG filetype, missing APP1 section",
@@ -143,12 +156,14 @@ impl FromBinary for ExifData {
             }
         }
 
+        // @TODO: Make better bounds on reading past limit
+
         // Reader is now just after Exif magic
         let byte_order = {
             let mut buf = [0u8; 2];
             reader.read_exact(&mut buf)?;
             ByteOrder::from(u16::from_be_bytes(buf))
-        }
+        };
 
         // 2 byte check goes here
 
