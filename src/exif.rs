@@ -1,7 +1,6 @@
-use crate::{FromBinary, FromBinaryLimit};
 use std::io;
 use std::io::{Read, Seek, SeekFrom};
-
+use crate::binary::{BufBinaryReader, FromBinary};
 // pub enum EXIFTags {
 //
 // }
@@ -74,14 +73,8 @@ pub struct ExifData {
 }
 
 impl FromBinary for Vec<ImageFileDirectory> {
-    fn read_from<R: Read + Seek>(reader: &mut R) -> io::Result<Self> {
-        let entry_count = {
-            let mut buf = [0u8; 2];
-            reader.read_exact(&mut buf)?;
-            u16::from_le_bytes(buf)
-        };
-
-        dbg!(entry_count);
+    fn read_from<R: Read + Seek>(reader: &mut BufBinaryReader<R>) -> io::Result<Self> {
+        let entry_count: u16 = reader.read()?;
 
         let entries: Vec<ImageFileDirectory> = Vec::new();
 
@@ -89,11 +82,10 @@ impl FromBinary for Vec<ImageFileDirectory> {
     }
 }
 
-impl FromBinaryLimit for ExifData {
-    fn read_from_to_limit<R: Read + Seek>(reader: &mut R, limit: u64) -> io::Result<Self> {
+impl FromBinary for ExifData {
+    fn read_from<R: Read + Seek>(reader: &mut BufBinaryReader<R>) -> io::Result<Self> {
         // Assume we're reading from the start of a JPEG Image
-        let mut buf = [0u8; 2];
-        reader.read_exact(&mut buf);
+        let mut buf = reader.read_bytes(2)?;
 
         // Make sure we're starting from a Tag at least.
         if buf[0] != 0xFF {
@@ -106,40 +98,25 @@ impl FromBinaryLimit for ExifData {
         let mut size: u16 = 0;
         let mut done: bool = false;
 
-        dbg!(buf);
-
         // Seek to correct APP1 Tag
         while !done {
-            if reader.stream_position()? > limit {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "invalid JPEG filetype, ran out of bytes",
-                ));
-            }
-
             match (buf[1]) {
                 0xC0..=0xCF | 0xDB..=0xDF | 0xE0 | 0xE2..=0xEF => {
                     // SOF1-SOF15, DQT, DNL, DRI, DHP, EXP, APP0, APP2-APP15
-                    dbg!("sized");
-                    reader.read_exact(&mut buf)?;
-                    let len = u16::from_be_bytes(buf);
-                    reader.seek(SeekFrom::Current((len)  as i64))?;
-                    reader.read_exact(&mut buf)?;
+                    let len: u16 = reader.read()?;
+                    reader.seek(SeekFrom::Current((len) as i64))?;
+                    buf = reader.read_bytes(2)?;
                 }
                 0xD0..=0xD8 | 0xFE => {
                     // RST, DQT, DNL, DRI, DHP, EXP
-                    dbg!("unsized");
-                    reader.read_exact(&mut buf)?;
+                    buf = reader.read_bytes(2)?;
                 }
                 0xE1 => {
-                    dbg!("app1");
                     // APP1
-                    reader.read_exact(&mut buf)?;
-                    let len = u16::from_be_bytes(buf);
+                    let len: u16 = reader.read()?;
 
                     if len >= 6 {
-                        let mut magic = [0u8; 6];
-                        reader.read_exact(&mut magic)?;
+                        let mut magic = reader.read_bytes(6)?;
 
                         if &magic == b"Exif\0\0" {
                             // Found the data!
@@ -147,11 +124,11 @@ impl FromBinaryLimit for ExifData {
                             done = true;
                         } else {
                             reader.seek(SeekFrom::Current((len - 6)  as i64))?;
-                            reader.read_exact(&mut buf)?;
+                            buf = reader.read_bytes(2)?;
                         }
                     } else {
                         reader.seek(SeekFrom::Current((len)  as i64))?;
-                        reader.read_exact(&mut buf)?;
+                        buf = reader.read_bytes(2)?;
                     }
                 }
                 0xD9 | 0xDA => {
@@ -174,11 +151,7 @@ impl FromBinaryLimit for ExifData {
         // @TODO: Make better bounds on reading past limit
 
         // Reader is now just after Exif magic
-        let byte_order = {
-            let mut buf = [0u8; 2];
-            reader.read_exact(&mut buf)?;
-            ByteOrder::from(u16::from_be_bytes(buf))
-        };
+        let byte_order = ByteOrder::from(reader.read::<u16>()?);
 
         // 2 byte check goes here
 

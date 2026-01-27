@@ -1,8 +1,8 @@
 use std::fmt::{Display, Formatter};
 use std::{fmt, io};
 use std::io::{Read, Seek, SeekFrom};
+use crate::binary::{BufBinaryReader, Endian, FromBinary};
 use crate::exif::{ExifData};
-use crate::{FromBinary, FromBinaryLimit};
 
 macro_rules! impl_raf_meta_tag {
     (
@@ -160,22 +160,11 @@ pub struct Raf {
 }
 
 impl FromBinary for RafMetadataItem {
-    fn read_from<R: Read + Seek>(reader: &mut R) -> io::Result<Self> {
-        let tag = {
-            let mut buf = [0u8; 2];
-            reader.read_exact(&mut buf)?;
-            RafMetadataTag::from(u16::from_be_bytes(buf))
-        };
-
-        let size = {
-            let mut buf = [0u8; 2];
-            reader.read_exact(&mut buf)?;
-            u16::from_be_bytes(buf)
-        };
-
-        let mut buf = vec![0u8; size as usize];
-        reader.read_exact(&mut buf)?;
-
+    fn read_from<R: Read + Seek>(reader: &mut BufBinaryReader<R>) -> io::Result<Self> {
+        reader.set_endianness(Endian::Big);
+        let tag = RafMetadataTag::from(reader.read::<u16>()?);
+        let size: u16 = reader.read()?;
+        let buf = reader.read_bytes(size as usize)?;
         let data: RafMetadataType;
 
         match tag {
@@ -278,52 +267,20 @@ impl FromBinary for RafMetadataItem {
 }
 
 impl FromBinary for RafImageSequenceContainer {
-    fn read_from<R: Read + Seek>(reader: &mut R) -> io::Result<Self> {
-        let additional_image_count = {
-            let mut buf = [0u8; 4];
-            reader.read_exact(&mut buf)?;
-            u32::from_be_bytes(buf)
-        };
-
-        let total_image_count = {
-            let mut buf = [0u8; 4];
-            reader.read_exact(&mut buf)?;
-            u32::from_be_bytes(buf)
-        };
-
-        let version = {
-            let mut buf = [0u8; 12];
-            reader.read_exact(&mut buf)?;
-            String::from_utf8(buf.to_vec()).unwrap()
-        };
-
-        let image_sequence_metadata_size = {
-            let mut buf = [0u8; 2];
-            reader.read_exact(&mut buf)?;
-            u16::from_be_bytes(buf)
-        };
-
-        let image_sequence_metadata_count = {
-            let mut buf = [0u8; 2];
-            reader.read_exact(&mut buf)?;
-            u16::from_be_bytes(buf)
-        };
-
+    fn read_from<R: Read + Seek>(reader: &mut BufBinaryReader<R>) -> io::Result<Self> {
+        reader.set_endianness(Endian::Big);
+        let additional_image_count = reader.read()?;
+        let total_image_count = reader.read()?;
+        let version = String::from_utf8(reader.read_bytes(12)?).unwrap();
+        let image_sequence_metadata_size = reader.read()?;
+        let image_sequence_metadata_count = reader.read()?;
         let mut image_sequence_images = Vec::with_capacity(total_image_count as usize);
+
         for _ in 0..total_image_count {
-            let cfa_offset = {
-                let mut buf = [0u8; 8];
-                reader.read_exact(&mut buf)?;
-                u64::from_be_bytes(buf)
-            };
-
-            let cfa_size = {
-                let mut buf = [0u8; 8];
-                reader.read_exact(&mut buf)?;
-                u64::from_be_bytes(buf)
-            };
-
+            let cfa_offset = reader.read()?;
+            let cfa_size = reader.read()?;
             let mut metadata = Vec::with_capacity(image_sequence_metadata_count as usize);
+
             for _ in 0..image_sequence_metadata_count {
                 metadata.push(RafMetadataItem::read_from(reader)?);
             }
@@ -349,12 +306,10 @@ impl FromBinary for RafImageSequenceContainer {
 }
 
 impl FromBinary for RafMetadataContainer {
-    fn read_from<R: Read + Seek>(reader: &mut R) -> io::Result<Self> {
-        let count = {
-            let mut buf = [0u8; 4];
-            reader.read_exact(&mut buf)?;
-            u32::from_be_bytes(buf)
-        };
+    fn read_from<R: Read + Seek>(reader: &mut BufBinaryReader<R>) -> io::Result<Self> {
+        reader.set_endianness(Endian::Big);
+
+        let count = reader.read()?;
 
         // Put a sanity check here
 
@@ -368,9 +323,8 @@ impl FromBinary for RafMetadataContainer {
 }
 
 impl FromBinary for Raf {
-    fn read_from<R: Read + Seek>(reader: &mut R) -> io::Result<Self> {
-        let mut buf = [0u8; 16];
-        reader.read_exact(&mut buf)?;
+    fn read_from<R: Read + Seek>(reader: &mut BufBinaryReader<R>) -> io::Result<Self> {
+        let buf = reader.read_bytes(16)?;
         if &buf != b"FUJIFILMCCD-RAW " {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -378,68 +332,28 @@ impl FromBinary for Raf {
             ));
         }
 
-        reader.seek(SeekFrom::Current(12))?;
+        reader.set_endianness(Endian::Big);
+        reader.skip_bytes(12)?;
+        let camera = String::from_utf8(reader.read_bytes(32)?).unwrap();
+        let version = reader.read()?;
+        reader.skip_bytes(20)?;
+        let jpeg_offset: u32 = reader.read()?;
+        let jpeg_size: u32 = reader.read()?;
+        let meta_container_offset: u32 = reader.read()?;
 
-        let camera = {
-            let mut buf = [0u8; 32];
-            reader.read_exact(&mut buf)?;
-            String::from_utf8(buf.to_vec()).unwrap()
-        };
+        // let meta_container_size: u32
+        // let cfa_offset: u32
+        // let cfa_size: u32
 
-        let version = {
-            let mut buf = [0u8; 4];
-            reader.read_exact(&mut buf)?;
-            u32::from_be_bytes(buf)
-        };
-
-        reader.seek(SeekFrom::Current(20))?;
-
-        let jpeg_offset = {
-            let mut buf = [0u8; 4];
-            reader.read_exact(&mut buf)?;
-            u32::from_be_bytes(buf)
-        };
-
-        let jpeg_size = {
-            let mut buf = [0u8; 4];
-            reader.read_exact(&mut buf)?;
-            u32::from_be_bytes(buf)
-        };
-
-        let meta_container_offset = {
-            let mut buf = [0u8; 4];
-            reader.read_exact(&mut buf)?;
-            u32::from_be_bytes(buf)
-        };
-
-        // let meta_container_size = {
-        //     let mut buf = [0u8; 4];
-        //     reader.read_exact(&mut buf)?;
-        //     u32::from_be_bytes(buf)
-        // };
-        //
-        // let cfa_offset = {
-        //     let mut buf = [0u8; 4];
-        //     reader.read_exact(&mut buf)?;
-        //     u32::from_be_bytes(buf)
-        // };
-        //
-        // let cfa_size = {
-        //     let mut buf = [0u8; 4];
-        //     reader.read_exact(&mut buf)?;
-        //     u32::from_be_bytes(buf)
-        // };
-
-        reader.seek(SeekFrom::Current(12))?;
+        reader.skip_bytes(12);
 
         // We can sense if this is an Image Sequence if the magic is here, or if we're at the JPEG Offset.
         let image_sequence_metadata = {
             if reader.stream_position()? + 60 >= jpeg_offset as u64 {
                 None
             } else {
-                reader.seek(SeekFrom::Current(40))?;
-                let mut buf = [0u8; 20];
-                reader.read_exact(&mut buf)?;
+                reader.skip_bytes(40);
+                let buf = reader.read_bytes(20)?;
                 if &buf != b"FUJIFILMM-RAW   1.00" {
                     None
                 } else {
@@ -452,7 +366,7 @@ impl FromBinary for Raf {
         let meta = RafMetadataContainer::read_from(reader)?;
 
         reader.seek(SeekFrom::Start(jpeg_offset as u64))?;
-        let exif_data = ExifData::read_from_to_limit(reader, jpeg_size as u64)?;
+        let exif_data = ExifData::read_from(reader)?;
 
         Ok(Self {
             camera,
