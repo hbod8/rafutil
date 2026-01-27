@@ -1,4 +1,4 @@
-use crate::FromBinaryLimit;
+use crate::{FromBinary, FromBinaryLimit};
 use std::io;
 use std::io::{Read, Seek, SeekFrom};
 
@@ -70,9 +70,24 @@ pub struct ExifData {
     byte_order: ByteOrder,
     // Remember to ensure byte order matches the 0x002a value
     // ifd_offset: u32,
-    image_file_directories: Vec<ImageFileDirectoryEntry>,
+    image_file_directories: Vec<ImageFileDirectory>,
 }
 
+impl FromBinary for Vec<ImageFileDirectory> {
+    fn read_from<R: Read + Seek>(reader: &mut R) -> io::Result<Self> {
+        let entry_count = {
+            let mut buf = [0u8; 2];
+            reader.read_exact(&mut buf)?;
+            u16::from_le_bytes(buf)
+        };
+
+        dbg!(entry_count);
+
+        let entries: Vec<ImageFileDirectory> = Vec::new();
+
+        Ok(entries)
+    }
+}
 
 impl FromBinaryLimit for ExifData {
     fn read_from_to_limit<R: Read + Seek>(reader: &mut R, limit: u64) -> io::Result<Self> {
@@ -167,7 +182,7 @@ impl FromBinaryLimit for ExifData {
 
         // 2 byte check goes here
 
-        let image_file_directories: Vec<ImageFileDirectoryEntry> = Vec::new();
+        let image_file_directories = Vec::<ImageFileDirectory>::read_from(reader)?;
 
         Ok(Self {
             size,
